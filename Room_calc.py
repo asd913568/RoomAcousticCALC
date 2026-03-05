@@ -45,7 +45,6 @@ is_mm = (unit_spk == "mm (밀리미터)")
 disp_u_room = "m" if is_m else "cm"
 disp_u_spk = "mm" if is_mm else "inch"
 
-# 단위 변경 시 기존 입력값 안전하게 변환
 if st.session_state.prev_unit_room != unit_room:
     keys_to_convert = ["ui_L", "ui_W", "ui_H", "ui_d_floor", "ui_d_back", "ui_d_side"]
     if is_m: 
@@ -63,7 +62,6 @@ fmt_r = "%.2f" if is_m else "%.0f"
 L_in = st.sidebar.number_input(f"방 길이 (세로, L)", step=step_r, format=fmt_r, key="ui_L")
 W_in = st.sidebar.number_input(f"방 너비 (가로, W)", step=step_r, format=fmt_r, key="ui_W")
 H_in = st.sidebar.number_input(f"방 높이 (H)", step=step_r, format=fmt_r, key="ui_H")
-
 L, W, H = (L_in, W_in, H_in) if is_m else (L_in/100.0, W_in/100.0, H_in/100.0)
 
 st.sidebar.divider()
@@ -80,14 +78,17 @@ spk_depth = spk_d_in/1000.0 if is_mm else spk_d_in * 0.0254
 spk_height = spk_h_in/1000.0 if is_mm else spk_h_in * 0.0254
 
 st.sidebar.divider()
+st.sidebar.header("🎯 스피커 모니터링 용도")
+st.sidebar.caption("스캐너가 목표로 할 정삼각형(청취) 거리를 결정합니다.")
+spk_type = st.sidebar.radio("스피커 체급 선택", ["Nearfield (1.0m ~ 1.5m)", "Midfield (1.5m ~ 2.5m)", "Farfield (2.5m 이상)"], index=0)
+
+st.sidebar.divider()
 st.sidebar.header(f"🔊 스피커 드라이버 중심 거리 ({disp_u_room})")
 d_back_in = st.sidebar.number_input(f"뒷벽과의 거리", step=step_r, format=fmt_r, key="ui_d_back")
 d_side_in = st.sidebar.number_input(f"옆벽과의 거리", step=step_r, format=fmt_r, key="ui_d_side")
 d_floor_in = st.sidebar.number_input(f"바닥과의 거리 (귀 높이)", step=step_r, format=fmt_r, key="ui_d_floor")
-
 d_back, d_side, d_floor = (d_back_in, d_side_in, d_floor_in) if is_m else (d_back_in/100.0, d_side_in/100.0, d_floor_in/100.0)
 
-# 천장 거리 자동 연산
 if d_floor >= H:
     st.sidebar.error("⚠️ 오류: 바닥과의 거리가 방 높이보다 크거나 같습니다.")
     d_ceil = 0.01 
@@ -171,27 +172,37 @@ ax.set_yticks([]); ax.grid(True, which='both', axis='x', linestyle=':', alpha=0.
 ax.legend(loc='upper right', bbox_to_anchor=(1, 1.15), ncol=5) 
 st.pyplot(fig)
 
-# --- 도면 렌더링 (포맷 에러 수정 완료) ---
+# --- 도면 렌더링 1: 스피커 배치 전용 도면 ---
 st.divider()
 st.subheader("📐 룸 레이아웃 및 리스닝 스팟 도면")
 dist_speakers = W - (2 * d_side)
-if dist_speakers <= 0: st.error("⚠️ 에러: 스피커 간격 오류.")
+
+scale = 1.0 if is_m else 100.0
+p_W, p_L, p_H = W * scale, L * scale, H * scale
+p_ds, p_db = d_side * scale, d_back * scale
+p_sw, p_sd, p_sh = spk_width * scale, spk_depth * scale, spk_height * scale
+p_dfl, p_dcl = d_floor * scale, d_ceil * scale
+pad = 0.5 * scale
+
+if dist_speakers <= 0: 
+    st.error("⚠️ 에러: 스피커 간격 오류.")
+    lp_y, p_lpx, p_lpy, h_tri = 0, 0, 0, 0
 else:
-    th = dist_speakers * (np.sqrt(3) / 2); lp_y, lp_x = d_back + th, W / 2 
-    if lp_y > L: st.warning("⚠️ 물리적 한계 경고: 리스닝 스팟이 방의 뒷벽을 벗어납니다.")
-    
-    scale = 1.0 if is_m else 100.0
-    p_W, p_L, p_H = W * scale, L * scale, H * scale
-    p_ds, p_db = d_side * scale, d_back * scale
-    p_sw, p_sd, p_sh = spk_width * scale, spk_depth * scale, spk_height * scale
+    h_tri = dist_speakers * (np.sqrt(3) / 2)
+    lp_y, lp_x = d_back + h_tri, W / 2 
     p_lpx, p_lpy = lp_x * scale, lp_y * scale
-    p_dfl, p_dcl = d_floor * scale, d_ceil * scale
-    pad = 0.5 * scale
+    
+    if lp_y > L: st.warning("⚠️ 물리적 한계 경고: 리스닝 스팟이 방의 뒷벽을 벗어납니다.")
 
     fig_map, (at, aside) = plt.subplots(1, 2, figsize=(14, 6))
     
     # Top View
     at.add_patch(patches.Rectangle((0, 0), p_W, p_L, fill=False, edgecolor='black', lw=3))
+    at.axhline(y=p_L * 0.38, color='magenta', linestyle='-.', lw=1.5, alpha=0.5)
+    at.text(p_W / 2, p_L * 0.38 + pad/4, "38% 룰 (전면 기준)", color='magenta', ha='center', va='bottom', fontsize=9, alpha=0.8)
+    at.axhline(y=p_L * 0.62, color='magenta', linestyle=':', lw=1.0, alpha=0.3)
+    at.text(p_W / 2, p_L * 0.62 + pad/4, "38% 룰 (후면 기준)", color='magenta', ha='center', va='bottom', fontsize=8, alpha=0.5)
+
     at.add_patch(patches.Rectangle((p_ds-p_sw/2, p_db-p_sd), p_sw, p_sd, color='gray', alpha=0.5))
     at.add_patch(patches.Rectangle((p_W-p_ds-p_sw/2, p_db-p_sd), p_sw, p_sd, color='gray', alpha=0.5))
     at.plot(p_ds, p_db, 's', color='black', markersize=8, label='Driver Center')
@@ -202,85 +213,137 @@ else:
     at.plot([0, p_ds], [p_db, p_db], color='green', linestyle=':', lw=2)
     at.plot([p_ds, p_ds], [0, p_db], color='blue', linestyle=':', lw=2)
     
-    # 에러 구문(f-string) 수정 파트
     at.annotate(f"{fmt_r % d_side_in}{disp_u_room}", xy=(p_ds/2, p_db), ha='center', va='bottom', color='green')
     at.annotate(f"{fmt_r % d_back_in}{disp_u_room}", xy=(p_ds, p_db/2), ha='left', va='center', color='blue')
-    
     at.set_xlim(-pad, p_W + pad); at.set_ylim(-pad, p_L + pad)
-    at.set_title(f"Top View ({disp_u_room} 기준)"); at.grid(True, linestyle=':', alpha=0.5); at.legend()
+    at.set_title(f"Top View (배치 Layout)"); at.grid(True, linestyle=':', alpha=0.5); at.legend()
     
     # Side View
     aside.add_patch(patches.Rectangle((0, 0), p_L, p_H, fill=False, edgecolor='black', lw=3))
+    aside.axvline(x=p_L * 0.38, color='magenta', linestyle='-.', lw=1.5, alpha=0.5)
+    
     aside.add_patch(patches.Rectangle((p_db-p_sd, p_dfl-p_sh/2), p_sd, p_sh, color='gray', alpha=0.5))
     aside.plot(p_db, p_dfl, 's', color='black', markersize=8)
     aside.plot(p_lpy, p_dfl, 'o', color='red', markersize=10)
-    
     aside.plot([p_db, p_lpy], [p_dfl, p_dfl], 'r--', alpha=0.6)
-    
     aside.plot([p_db, p_db], [0, p_dfl], color='orange', linestyle=':', lw=2)
     aside.plot([p_db, p_db], [p_dfl, p_H], color='purple', linestyle=':', lw=2)
     
-    # 에러 구문(f-string) 수정 파트
     aside.annotate(f"{fmt_r % d_floor_in}{disp_u_room}", xy=(p_db, p_dfl/2), ha='left', va='center', color='orange')
     aside.annotate(f"{fmt_r % c_disp}{disp_u_room}", xy=(p_db, p_dfl + p_dcl/2), ha='left', va='center', color='purple')
-    
     aside.set_xlim(-pad, p_L + pad); aside.set_ylim(-pad, p_H + pad)
-    aside.set_title(f"Side View ({disp_u_room} 기준)"); aside.grid(True, linestyle=':', alpha=0.5)
+    aside.set_title(f"Side View (배치 Layout)"); aside.grid(True, linestyle=':', alpha=0.5)
     
     st.pyplot(fig_map)
 
-# --- 최적화 스캐너 ---
+# --- 튜토리얼 및 2분할 스캐너 ---
 st.divider()
-st.subheader("🎯 최적 스피커 배치 스캐너 (물리적 한계 반영)")
-st.markdown("현재 도면의 간섭 페널티가 크다면, 시스템이 계산한 아래의 최적 좌표로 변경해 보세요.")
-if st.button("🚀 최적 배치 스캔 시작"):
-    best_score, best_db, best_ds, best_sbirs = float('inf'), d_back, d_side, {}
-    min_db, min_ds = spk_depth + 0.05, (spk_width / 2) + 0.05
-    db_range = np.arange(min_db, min(L/2, 1.5), 0.05); ds_range = np.arange(min_ds, W/2 - 0.4, 0.05) 
-    progress_bar = st.progress(0); total = len(db_range) * len(ds_range); count = 0
-    for db in db_range:
-        for ds in ds_range:
-            ts = {"뒷벽": C/(4*db), "옆벽": C/(4*ds), "바닥": C/(4*d_floor), "천장": C/(4*d_ceil)}
-            penalty = sum(50 for f in ts.values() for m in df_modes["주파수 (Hz)"] if abs(m-f) < 10)
-            vs = list(ts.values()); penalty += sum(30 for i in range(4) for j in range(i+1, 4) if abs(vs[i]-vs[j]) < 10)
-            penalty += sum(15 for f in ts.values() if f < 100)
-            if penalty < best_score: best_score, best_db, best_ds, best_sbirs = penalty, db, ds, {k: round(v, 1) for k, v in ts.items()}
-            count += 1; progress_bar.progress(count / total)
-    progress_bar.empty()
-    st.session_state.best_d_back, st.session_state.best_d_side, st.session_state.best_sbirs, st.session_state.scan_done = best_db, best_ds, best_sbirs, True
+st.subheader("🎯 스피커 배치 최적화 스캐너 (Hybrid Workflow)")
+
+with st.expander("📖 [필독] 완벽한 배치를 위한 하이브리드 워크플로우 가이드"):
+    st.markdown("""
+    음향 세팅에서 완벽한 배치는 없으며, **룸모드(방의 울림)**와 **SBIR(위상 상쇄)** 사이의 타협점을 찾는 교차 검증(Iteration) 과정입니다.  
+    
+    1. **스텝 1 (LP 우선)**: 먼저 `[Mode A]` 탭을 열어 청취 위치(LP)를 방 길이의 38% 근처 안정 지대에 놓습니다.
+    2. **스텝 2 (검증)**: 도출된 스피커 거리를 적용한 뒤, 도면 아래의 흡음 솔루션 표에서 **100Hz 이하에 심각한 딥(Dip)**이 생기는지 확인합니다. (이 대역의 SBIR은 서브우퍼가 없다면 흡음이나 EQ로 해결 불가합니다.)
+    3. **스텝 3 (타협)**: SBIR 딥이 너무 심각하다면, `[Mode B]` 탭으로 넘어가 SBIR을 피하는 스피커 좌표를 찾습니다.
+    4. **스텝 4 (최종 조정)**: 추천값을 적용한 후, 도면 상의 빨간 점(LP)이 방의 50%나 25% 같은 '데드스팟'에 들어가지 않도록 미세 조정하며 REW로 최종 실측합니다.
+    
+    > **💡 서브우퍼 사용자의 경우**: 메인 스피커의 80Hz 이하 SBIR 딥은 서브우퍼가 담당하므로 무시해도 좋습니다. 이 경우 `[Mode A]` 방식이 더 유리할 수 있습니다.
+    """)
+
+tab_A, tab_B = st.tabs(["🎯 Mode A: 리스닝 스팟 (38% Rule) 최우선", "🎯 Mode B: SBIR 간섭 최소화 최우선"])
+
+with tab_A:
+    st.markdown("**작동 원리**: 청취자의 귀(LP)를 룸모드의 영향을 가장 적게 받는 방 길이의 38% 지점(또는 후면 62%)에 먼저 고정하고, 정삼각형을 이루는 스피커의 좌표를 역산합니다.")
+    target_lp_y = L * 0.38
+    t_min, t_max = 1.0, 1.5
+    if "Midfield" in spk_type: t_min, t_max = 1.5, 2.5
+    elif "Farfield" in spk_type: t_min, t_max = 2.5, float('inf')
+    
+    if st.button("🚀 Mode A 스캔 시작 (38% 룰 기반)", key="btn_mode_a"):
+        best_score_A, best_db_A, best_ds_A, best_sbirs_A = float('inf'), d_back, d_side, {}
+        min_db = spk_depth + 0.05
+        min_ds = (spk_width / 2) + 0.05
+        ds_range = np.arange(min_ds, W/2 - 0.4, 0.01)
+        
+        valid_found = False
+        for target_y in [L * 0.38, L * 0.62]: 
+            for ds in ds_range:
+                tri_dist = W - (2 * ds)
+                if not (t_min <= tri_dist <= t_max): continue
+                
+                tri_height = tri_dist * (np.sqrt(3) / 2)
+                db = target_y - tri_height
+                
+                if db >= min_db: 
+                    valid_found = True
+                    ts = {"뒷벽": C/(4*db), "옆벽": C/(4*ds), "바닥": C/(4*d_floor), "천장": C/(4*d_ceil)}
+                    penalty = sum(50 for f in ts.values() for m in df_modes["주파수 (Hz)"] if abs(m-f) < 10)
+                    vs = list(ts.values()); penalty += sum(30 for i in range(4) for j in range(i+1, 4) if abs(vs[i]-vs[j]) < 10)
+                    penalty += sum(15 for f in ts.values() if f < 100)
+                    if penalty < best_score_A: best_score_A, best_db_A, best_ds_A, best_sbirs_A = penalty, db, ds, {k: round(v, 1) for k, v in ts.items()}
+
+        if not valid_found: st.error(f"⚠️ **계산 불가**: 방 너비({W_in}{disp_u_room})와 '{spk_type}' 조건으로는 38% 지점에 LP를 두는 배치가 물리적으로 불가능합니다. Mode B를 사용하세요.")
+        else:
+            st.session_state.best_d_back, st.session_state.best_d_side, st.session_state.best_sbirs = best_db_A, best_ds_A, best_sbirs_A
+            st.session_state.scan_done = True
+            st.success("**Mode A 기반 추천 좌표 도출 완료!**")
+
+with tab_B:
+    st.markdown("**작동 원리**: 스피커와 벽면 사이의 간섭(SBIR) 딥을 흡음 가능한 100Hz 이상으로 분산시키는 스피커의 물리적 좌표를 최우선으로 찾습니다. (LP 위치가 데드스팟으로 밀릴 수 있으니 주의)")
+    if st.button("🚀 Mode B 스캔 시작 (SBIR 최소화)", key="btn_mode_b"):
+        best_score_B, best_db_B, best_ds_B, best_sbirs_B = float('inf'), d_back, d_side, {}
+        min_db = spk_depth + 0.05
+        min_ds = (spk_width / 2) + 0.05
+        db_range = np.arange(min_db, min(L/2, 1.5), 0.05)
+        ds_range = np.arange(min_ds, W/2 - 0.4, 0.05) 
+        
+        progress_bar = st.progress(0); total = len(db_range) * len(ds_range); count = 0
+        valid_found = False
+        for db in db_range:
+            for ds in ds_range:
+                count += 1
+                tri_dist = W - (2 * ds)
+                if not (t_min <= tri_dist <= t_max):
+                    progress_bar.progress(count / total)
+                    continue
+                valid_found = True
+                ts = {"뒷벽": C/(4*db), "옆벽": C/(4*ds), "바닥": C/(4*d_floor), "천장": C/(4*d_ceil)}
+                penalty = sum(50 for f in ts.values() for m in df_modes["주파수 (Hz)"] if abs(m-f) < 10)
+                vs = list(ts.values()); penalty += sum(30 for i in range(4) for j in range(i+1, 4) if abs(vs[i]-vs[j]) < 10)
+                penalty += sum(15 for f in ts.values() if f < 100)
+                if penalty < best_score_B: best_score_B, best_db_B, best_ds_B, best_sbirs_B = penalty, db, ds, {k: round(v, 1) for k, v in ts.items()}
+                progress_bar.progress(count / total)
+        progress_bar.empty()
+        if not valid_found: st.error(f"⚠️ **스캔 실패**: 현재 입력된 방 너비로는 선택하신 타겟 청취 거리를 확보할 수 없습니다.")
+        else:
+            st.session_state.best_d_back, st.session_state.best_d_side, st.session_state.best_sbirs = best_db_B, best_ds_B, best_sbirs_B
+            st.session_state.scan_done = True
+            st.success("**Mode B 기반 추천 좌표 도출 완료!**")
 
 if st.session_state.scan_done:
     odb = st.session_state.best_d_back if is_m else round(st.session_state.best_d_back * 100, 0)
     ods = st.session_state.best_d_side if is_m else round(st.session_state.best_d_side * 100, 0)
-    st.success(f"**추천 좌표 도출 완료!**")
     cr1, cr2 = st.columns(2)
     with cr1:
         st.metric(label=f"💡 추천 뒷벽 거리 ({disp_u_room})", value=f"{odb} {disp_u_room}")
         st.metric(label=f"💡 추천 옆벽 거리 ({disp_u_room})", value=f"{ods} {disp_u_room}")
-        
         def update_layout():
             st.session_state.ui_d_back = odb
             st.session_state.ui_d_side = ods
             st.session_state.scan_done = False
-
-        st.button("✨ 이 추천값으로 자동 입력 및 레이아웃 갱신", type="primary", on_click=update_layout)
-
+        st.button("✨ 계산된 추천값으로 자동 입력 및 레이아웃 갱신", type="primary", on_click=update_layout)
     with cr2:
-        st.write(f"- **예상 뒷벽 딥**: {st.session_state.best_sbirs['뒷벽']} Hz / **옆벽 딥**: {st.session_state.best_sbirs['옆벽']} Hz")
+        st.write(f"- **예상 뒷벽 딥**: {st.session_state.best_sbirs.get('뒷벽', 0)} Hz / **옆벽 딥**: {st.session_state.best_sbirs.get('옆벽', 0)} Hz")
 
-st.info("""
-**비판적 팩트 체크**: 자동 입력 기능은 편리하지만, 이 수학적 최적점이 항상 귀로 듣기에 좋은 것은 아닙니다. 벽에 가까워질수록 위상 상쇄(Null)는 해결될지 모르나, **경계면 효과(Boundary Gain)**에 의해 저역 에너지가 기형적으로 증폭됩니다. 자동 입력 후 도면을 확인하셨다면, **반드시 실제 환경에서 측정 후 부풀어 오른 저음역대를 깎아내는 DSP EQ(쉘빙 필터) 작업이 수반되어야 함**을 명심하십시오.
-""")
-
-# --- 흡음 솔루션 및 중첩 경고 ---
+# --- 흡음 솔루션 및 데이터 ---
 st.divider()
 st.subheader("🛠️ SBIR 개선을 위한 흡음 솔루션")
 sc1, sc2 = st.columns(2)
-
 with sc1:
     st.markdown("#### 🔍 현재 배치별 SBIR 딥 요약")
     st.dataframe(df_sbir, use_container_width=True, hide_index=True)
-
 with sc2:
     st.markdown("#### 📍 다공성 흡음재 두께별 기대 효과 (100Hz 이상)")
     for wall, freq in sbir_data.items():
@@ -303,13 +366,97 @@ if warnings_mode:
     for w in set(warnings_mode): st.error(w)
 else: st.success("🟢 룸모드와 각 벽면의 SBIR 딥 간에 심각한 중첩이 발생하지 않는 양호한 배치입니다.")
 
-# --- 엔지니어를 위한 비판적 분석 노트 ---
+
+# --- 신규 도면 렌더링 2: 룸 트리트먼트 가이드 및 튜토리얼 ---
+st.divider()
+st.subheader("🛠️ 룸 트리트먼트 가이드 (흡음재 부착 시뮬레이션)")
+
+# 추가된 룸 트리트먼트 튜토리얼 아코디언
+with st.expander("📖 [필독] 흡음 vs 분산 (RT60 타겟) 및 에어갭(Air Gap) 시공 가이드"):
+    st.markdown("""
+    #### 1. RT60 잔향 시간에 따른 재질 선택 (Absorber vs Diffuser)
+    모든 반사 지점에 흡음재를 바르는 것은 초보적인 실수입니다. REW 측정 결과 룸의 잔향 시간(RT60)이 이미 소규모 룸 타겟인 **0.2초 ~ 0.3초**에 도달했다면 주의해야 합니다.
+    * **SBIR 타겟 (파란색/초록색)**: 이 구간은 저음역대의 위상 상쇄(에너지 소멸)를 막는 것이 목적이므로, 잔향 시간과 무관하게 무조건 **두꺼운 다공성 흡음재(Bass Trap)**가 필수입니다.
+    * **1차 반사 타겟 (빨간색/주황색)**: 이 구간은 중고음역대의 빗살모양 필터링(Comb Filtering) 왜곡을 방어합니다. 만약 방이 이미 충분히 건조하다면(데드 룸), 흡음재 대신 소리 에너지를 깎지 않고 방향만 흩뿌려주는 **디퓨저(분산재)**를 시공하는 것이 훨씬 자연스러운 모니터링 환경을 만듭니다.
+
+    #### 2. 에어갭(Air Gap)의 마법: 천장 클라우드 시공 팁
+    다공성 흡음재는 소리 입자의 속도가 0인 벽면 직전보다, 속도가 최대가 되는 **1/4 파장 지점**에서 가장 뛰어난 마찰(흡수) 효율을 냅니다. 
+    * **데이터 팩트 체크**: 천장에 무겁게 200mm 두께의 흡음재를 꽉 채워 매달 필요가 없습니다. 
+    * 100mm 두께의 흡음재를 천장에서 **100mm 띄워서(Air Gap) 시공**하게 되면, 저음 흡수 효율이 두께 200mm짜리 패널을 벽에 바짝 붙였을 때와 거의 동일해집니다. 이를 통해 천장 하중과 자재비를 획기적으로 줄이면서 완벽한 1차 반사 및 저역 제어 효과를 누릴 수 있습니다.
+    """)
+
+st.markdown("""
+스피커 배치가 확정된 후, 물리적인 반사음을 제어하기 위한 **데이터 기반의 흡음 패널 부착 위치 가이드**입니다.
+* 🟦 **파란색/초록색 박스 (SBIR 존)**: 저음역대 상쇄를 막기 위한 두꺼운(100T~200T) 베이스 트랩이 필요한 구간.
+* 🟥 **빨간색/주황색 박스 (1차 반사 존)**: 거울상 기법(Mirror Image Method)으로 도출된 빗살모양 필터링(중고역 왜곡) 발생 지점. 얇은 흡음재나 분산재 부착.
+""")
+
+if dist_speakers > 0:
+    fig_trt, (trt_top, trt_side) = plt.subplots(1, 2, figsize=(14, 6))
+    
+    panel_w, panel_d = 0.6 * scale, 0.1 * scale
+    y_ref_side = p_db + (h_tri * scale * p_ds) / (p_W/2 + p_ds) 
+    y_ref_ceil = p_db + (h_tri * scale) / 2 
+    
+    # [Top View: 룸 트리트먼트]
+    trt_top.add_patch(patches.Rectangle((0, 0), p_W, p_L, fill=False, edgecolor='black', lw=3))
+    
+    # 수정: 스피커 인클로저(회색 박스) 렌더링 추가
+    trt_top.add_patch(patches.Rectangle((p_ds-p_sw/2, p_db-p_sd), p_sw, p_sd, color='gray', alpha=0.5))
+    trt_top.add_patch(patches.Rectangle((p_W-p_ds-p_sw/2, p_db-p_sd), p_sw, p_sd, color='gray', alpha=0.5))
+    
+    trt_top.plot(p_ds, p_db, 's', color='black', markersize=6)
+    trt_top.plot(p_W-p_ds, p_db, 's', color='black', markersize=6)
+    trt_top.plot(p_lpx, p_lpy, 'o', color='red', markersize=8)
+    
+    # SBIR 패널 (뒷벽/옆벽)
+    trt_top.add_patch(patches.Rectangle((p_ds - panel_w/2, 0), panel_w, panel_d, color='blue', alpha=0.7, label='SBIR 패널 (뒷벽)'))
+    trt_top.add_patch(patches.Rectangle((p_W - p_ds - panel_w/2, 0), panel_w, panel_d, color='blue', alpha=0.7))
+    trt_top.add_patch(patches.Rectangle((0, p_db - panel_w/2), panel_d, panel_w, color='green', alpha=0.7, label='SBIR 패널 (옆벽)'))
+    trt_top.add_patch(patches.Rectangle((p_W - panel_d, p_db - panel_w/2), panel_d, panel_w, color='green', alpha=0.7))
+    
+    # 1차 반사 패널 (옆벽)
+    trt_top.add_patch(patches.Rectangle((0, y_ref_side - panel_w/2), panel_d, panel_w, color='red', alpha=0.6, label='1차 반사 패널 (옆벽)'))
+    trt_top.add_patch(patches.Rectangle((p_W - panel_d, y_ref_side - panel_w/2), panel_d, panel_w, color='red', alpha=0.6))
+    
+    # 반사 경로 시각화 (Ray Tracing)
+    trt_top.plot([p_ds, 0, p_lpx], [p_db, y_ref_side, p_lpy], color='red', linestyle='--', lw=1.5, alpha=0.4)
+    trt_top.plot([p_W - p_ds, p_W, p_lpx], [p_db, y_ref_side, p_lpy], color='red', linestyle='--', lw=1.5, alpha=0.4)
+    
+    trt_top.set_xlim(-pad, p_W + pad); trt_top.set_ylim(-pad, p_L + pad)
+    trt_top.set_title(f"Top View (Acoustic Treatment)"); trt_top.grid(True, linestyle=':', alpha=0.5); trt_top.legend(loc='upper right')
+
+    # [Side View: 룸 트리트먼트]
+    trt_side.add_patch(patches.Rectangle((0, 0), p_L, p_H, fill=False, edgecolor='black', lw=3))
+    
+    # 수정: 스피커 인클로저(회색 박스) 렌더링 추가
+    trt_side.add_patch(patches.Rectangle((p_db-p_sd, p_dfl-p_sh/2), p_sd, p_sh, color='gray', alpha=0.5))
+    
+    trt_side.plot(p_db, p_dfl, 's', color='black', markersize=6)
+    trt_side.plot(p_lpy, p_dfl, 'o', color='red', markersize=8)
+    
+    # SBIR 패널 (앞벽 수직면)
+    trt_side.add_patch(patches.Rectangle((0, p_dfl - panel_w/2), panel_d, panel_w, color='blue', alpha=0.7, label='SBIR 패널 (앞벽)'))
+    
+    # 1차 반사 패널 (천장 Cloud / 바닥)
+    trt_side.add_patch(patches.Rectangle((y_ref_ceil - panel_w/2, p_H - panel_d), panel_w, panel_d, color='purple', alpha=0.6, label='천장 클라우드 (1차 반사)'))
+    trt_side.add_patch(patches.Rectangle((y_ref_ceil - panel_w/2, 0), panel_w, panel_d, color='orange', alpha=0.5, label='러그/바닥 (1차 반사)'))
+    
+    # 반사 경로 시각화
+    trt_side.plot([p_db, y_ref_ceil, p_lpy], [p_dfl, p_H, p_dfl], color='purple', linestyle='--', lw=1.5, alpha=0.4)
+    trt_side.plot([p_db, y_ref_ceil, p_lpy], [p_dfl, 0, p_dfl], color='orange', linestyle='--', lw=1.5, alpha=0.4)
+
+    trt_side.set_xlim(-pad, p_L + pad); trt_side.set_ylim(-pad, p_H + pad)
+    trt_side.set_title(f"Side View (Acoustic Treatment)"); trt_side.grid(True, linestyle=':', alpha=0.5); trt_side.legend(loc='upper right')
+    
+    st.pyplot(fig_trt)
+
+# --- 엔지니어를 위한 비판적 분석 노트 (삭제 및 병합 처리로 간소화) ---
 st.divider()
 st.info("💡 **엔지니어를 위한 데이터 분석 노트 (팩트 체크 및 한계점)**")
 st.markdown("""
-1. **시뮬레이션의 한계**: 본 시뮬레이션 데이터는 출발점일 뿐입니다. 방 구조에 따른 음파의 회절과 모드 변화를 완벽히 대변할 수 없으므로, **측정용 마이크와 REW(Room EQ Wizard)를 활용한 실측**을 통해 최종 배치를 결정해야 합니다.
-2. **SBIR 흡음재의 정확한 타겟팅**: SBIR 딥을 완화하기 위한 다공성 흡음재의 위치는 스피커의 토인(Toe-in) 각도와 무관합니다. 우퍼 드라이버 중심에서 벽면과 만나는 **최단 거리 지점(직각을 이루는 수직선 지점)**을 1차적으로 덮어야 유의미한 에너지를 흡수할 수 있습니다.
-3. **룸모드와 SBIR의 분리 접근 (DSP 제어)**: 
-    - **룸모드(Room Mode)**: 2개 이상의 멀티 서브우퍼를 배치하고 MSO(Multi-Sub Optimizer), Dirac Live ART 등의 기술을 적용하면, 단순히 주파수 응답을 넘어 룸모드로 인한 과도한 잔향 링잉(Ringing, Time Domain)까지 효과적으로 캔슬링 및 컨트롤 할 수 있습니다.
+1. **시뮬레이션의 한계**: 본 시뮬레이션 데이터는 출발점일 뿐입니다. 방 구조(가벽/석고보드 등)에 따른 음파의 회절과 모드 변화를 완벽히 대변할 수 없으므로, **측정용 마이크와 REW(Room EQ Wizard)를 활용한 실측**을 통해 최종 배치를 결정해야 합니다.
+2. **룸모드와 SBIR의 분리 접근 (DSP 제어)**: 
+    - **룸모드(Room Mode)**: 2개 이상의 멀티 서브우퍼를 배치하고 DSP를 적용하면 주파수 응답을 넘어 룸모드로 인한 과도한 잔향 링잉(Time Domain)까지 효과적으로 컨트롤 할 수 있습니다.
     - **SBIR (Spatial Null)**: 반면 SBIR로 인해 발생한 딥은 위상 상쇄에 의한 물리적 빈공간(Null)이므로, 서브우퍼나 EQ로 에너지를 부스트한다고 해서 결코 메워지지 않습니다. 이는 반드시 물리적인 흡음이나 스피커 위치 변경을 통해서만 해결 가능합니다.
 """)
